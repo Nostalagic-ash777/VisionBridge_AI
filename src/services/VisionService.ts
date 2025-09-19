@@ -61,7 +61,7 @@ export class VisionService {
   static async initialize(): Promise<void> {
     if (!this.model) {
       try {
-        console.log('Loading COCO-SSD model...');
+      this.model = await cocoSsd.load(); 
         this.model = await cocoSsd.load({
           base: 'mobilenet_v2' // Faster for mobile devices
         });
