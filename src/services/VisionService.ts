@@ -61,7 +61,7 @@ export class VisionService {
   static async initialize(): Promise<void> {
     if (!this.model) {
       try {
-      this.model = await cocoSsd.load(); 
+        console.log('Loading COCO-SSD model...');
         this.model = await cocoSsd.load({
           base: 'mobilenet_v2' // Faster for mobile devices
         });
@@ -363,9 +363,4 @@ export class VisionService {
     this.frameHistory = [];
     this.frameCounter = 0;
   }
-}    
-const loadPromise = cocoSsd.load().then(m => this.model = m);
-const timeout = new Promise((_, reject) => 
-  setTimeout(() => reject(new Error('Model load timed out')), 10000)
-);
-await Promise.race([loadPromise, timeout]);
+}
