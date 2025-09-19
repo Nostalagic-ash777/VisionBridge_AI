@@ -363,4 +363,9 @@ export class VisionService {
     this.frameHistory = [];
     this.frameCounter = 0;
   }
-}
+}    
+const loadPromise = cocoSsd.load().then(m => this.model = m);
+const timeout = new Promise((_, reject) => 
+  setTimeout(() => reject(new Error('Model load timed out')), 10000)
+);
+await Promise.race([loadPromise, timeout]);
