@@ -24,6 +24,20 @@ export interface DetectionResult {
 export interface DetectedObject {
   name: string;
   confidence: number;
-  position: 'left' | 'center' | 'right' | 'ahead';
-  distance: string;
+  position: 'left' | 'center' | 'right';
+  distance: number; // in meters
+  bbox: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  frameIndex: number;
+}
+
+export interface FrameDetection {
+  frameIndex: number;
+  timestamp: number;
+  objects: DetectedObject[];
+  lightingCondition: 'good' | 'low' | 'poor';
 }

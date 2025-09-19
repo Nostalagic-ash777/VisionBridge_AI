@@ -24,18 +24,21 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastDescription, setLastDescription] = useState('');
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [modelLoading, setModelLoading] = useState(true);
+  const [detectionStats, setDetectionStats] = useState({ processed: 0, detected: 0 });
 
   useEffect(() => {
-    startCamera();
+    initializeVision();
     return () => {
       stopCamera();
+      VisionService.resetFrameHistory();
     };
   }, []);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
     
-    if (isScanning && settings.continuousMode) {
+    if (isScanning && settings.continuousMode && !modelLoading) {
       interval = setInterval(captureAndAnalyze, 3000);
       // Initial capture
       setTimeout(captureAndAnalyze, 1000);
@@ -44,15 +47,40 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isScanning, settings.continuousMode]);
+  }, [isScanning, settings.continuousMode, modelLoading]);
 
+  const initializeVision = async () => {
+    try {
+      setModelLoading(true);
+      if (!audioMuted) {
+        AudioService.speak('Initializing vision system, please wait...', settings);
+      }
+      
+      // Initialize vision model and camera simultaneously
+      await Promise.all([
+        VisionService.initialize(),
+        startCamera()
+      ]);
+      
+      setModelLoading(false);
+      if (!audioMuted) {
+        AudioService.speak('Vision system ready. Starting navigation assistance.', settings);
+      }
+    } catch (error) {
+      console.error('Failed to initialize vision system:', error);
+      setModelLoading(false);
+      if (!audioMuted) {
+        AudioService.speak('Vision system initialization failed. Using basic mode.', settings);
+      }
+    }
+  };
   const startCamera = async () => {
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: { 
           facingMode: 'environment',
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
+          width: { ideal: 640, max: 1280 },
+          height: { ideal: 480, max: 720 }
         }
       });
       
@@ -76,7 +104,7 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
   };
 
   const captureAndAnalyze = async () => {
-    if (!videoRef.current || !canvasRef.current || isProcessing) return;
+    if (!videoRef.current || !canvasRef.current || isProcessing || modelLoading) return;
 
     setIsProcessing(true);
 
@@ -100,10 +128,19 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
           const result = await VisionService.analyzeImage(blob);
           
           if (result) {
+            // Update detection statistics
+            setDetectionStats(prev => ({
+              processed: prev.processed + 1,
+              detected: prev.detected + result.objects.length
+            }));
+            
             handleAnalysisResult(result);
           }
         } catch (error) {
           console.error('Analysis failed:', error);
+          if (!audioMuted) {
+            AudioService.speak('Detection temporarily unavailable.', settings);
+          }
         } finally {
           setIsProcessing(false);
         }
@@ -143,11 +180,19 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
 
     // Vibrate for warnings
     if (result.isWarning && settings.vibrationEnabled) {
-      VibrationService.vibrate([100, 50, 100]);
+      // Different vibration patterns based on proximity
+      const hasCloseObjects = result.objects.some(obj => obj.distance <= 2);
+      if (hasCloseObjects) {
+        VibrationService.vibrate([200, 100, 200, 100, 200]); // Urgent pattern
+      } else {
+        VibrationService.vibrate([100, 50, 100]); // Standard warning
+      }
     }
   };
 
   const toggleScanning = () => {
+    if (modelLoading) return;
+    
     setIsScanning(!isScanning);
     const message = isScanning ? 'Scanning paused' : 'Scanning resumed';
     if (!audioMuted) {
@@ -156,7 +201,7 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
   };
 
   const handleManualCapture = () => {
-    if (!settings.continuousMode) {
+    if (!settings.continuousMode && !modelLoading) {
       captureAndAnalyze();
     }
   };
@@ -165,6 +210,7 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
     const confirmStop = window.confirm('Are you sure you want to stop scanning?');
     if (confirmStop) {
       stopCamera();
+      VisionService.resetFrameHistory();
       onStop();
     }
   };
@@ -184,18 +230,36 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
       {/* Hidden canvas for captures */}
       <canvas ref={canvasRef} className="hidden" />
 
+      {/* Model Loading Indicator */}
+      {modelLoading && (
+        <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
+          <div className="text-center">
+            <Loader className="animate-spin mx-auto mb-4 text-blue-400" size={48} />
+            <p className="text-white text-lg mb-2">Initializing AI Vision</p>
+            <p className="text-gray-300 text-sm">Loading object detection model...</p>
+          </div>
+        </div>
+      )}
       {/* Processing Indicator */}
-      {isProcessing && (
+      {isProcessing && !modelLoading && (
         <div className="absolute top-6 left-1/2 transform -translate-x-1/2 bg-blue-600/90 backdrop-blur-sm px-4 py-2 rounded-full flex items-center gap-2">
           <Loader className="animate-spin" size={16} />
           <span className="text-white text-sm">Analyzing...</span>
         </div>
       )}
 
+      {/* Detection Statistics */}
+      {!modelLoading && detectionStats.processed > 0 && (
+        <div className="absolute top-6 left-6 bg-black/60 backdrop-blur-sm px-3 py-2 rounded-lg">
+          <p className="text-white text-xs">
+            Frames: {detectionStats.processed} | Objects: {detectionStats.detected}
+          </p>
+        </div>
+      )}
       {/* Last Description */}
       {lastDescription && (
-        <div className="absolute bottom-32 left-4 right-4 bg-black/80 backdrop-blur-sm p-4 rounded-lg">
-          <p className="text-white text-sm">{lastDescription}</p>
+        <div className="absolute bottom-32 left-4 right-4 bg-black/90 backdrop-blur-sm p-4 rounded-lg border border-gray-600">
+          <p className="text-white text-sm leading-relaxed">{lastDescription}</p>
         </div>
       )}
 
@@ -203,8 +267,11 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
       <div className="absolute bottom-6 left-0 right-0 flex justify-center items-center gap-4 px-6">
         <button
           onClick={toggleScanning}
+          disabled={modelLoading}
           className={`p-4 rounded-full shadow-lg transition-colors ${
-            isScanning 
+            modelLoading 
+              ? 'bg-gray-600 cursor-not-allowed'
+              : isScanning 
               ? 'bg-yellow-600 hover:bg-yellow-700' 
               : 'bg-green-600 hover:bg-green-700'
           }`}
@@ -216,11 +283,12 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
         {!settings.continuousMode && (
           <button
             onClick={handleManualCapture}
-            disabled={isProcessing}
-            className="p-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-full shadow-lg transition-colors"
+            disabled={isProcessing || modelLoading}
+            className="p-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed rounded-full shadow-lg transition-colors"
             aria-label="Capture and analyze"
           >
-            <Camera size={24} />
+            <Loader className={isProcessing ? "animate-spin" : "hidden"} size={24} />
+            <Camera className={isProcessing ? "hidden" : ""} size={24} />
           </button>
         )}
 
@@ -235,7 +303,13 @@ const CameraScreen: React.FC<CameraScreenProps> = ({
 
       {/* Scanning Status */}
       <div className="absolute top-6 left-6">
-        <div className={`w-3 h-3 rounded-full ${isScanning ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
+        <div className={`w-3 h-3 rounded-full ${
+          modelLoading 
+            ? 'bg-yellow-500 animate-pulse' 
+            : isScanning 
+              ? 'bg-green-500 animate-pulse' 
+              : 'bg-gray-500'
+        }`} />
       </div>
     </div>
   );
